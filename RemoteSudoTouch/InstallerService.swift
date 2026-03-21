@@ -127,8 +127,9 @@ struct ServiceStatusSnapshot {
 final class InstallerService {
   private let fileManager = FileManager.default
   private let bundleBinaryName = "RemoteSudoTouchAgent"
-  private let currentTeamPrefix = "com.paul.remotesudotouch"
+  private let currentTeamPrefix = "net.pomace.remotesudotouch"
   private let legacyTeamPrefixes = [
+    "com.paul.remotesudotouch",
     "com.paul.remotesudotouchagent",
     "com.paul.touchidsudoinstaller",
   ]

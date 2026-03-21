@@ -13,8 +13,8 @@
 - `~/Library/Application Support/RemoteSudoTouch/RemoteSudoTouch-agent.sh`
 - `~/Library/Application Support/RemoteSudoTouch/RemoteSudoTouch-ssh-tunnel.sh`
 - `~/Library/Application Support/RemoteSudoTouch/installer-config.json`
-- `~/Library/LaunchAgents/com.paul.remotesudotouch.agent.plist`
-- `~/Library/LaunchAgents/com.paul.remotesudotouch.tunnel.plist`
+- `~/Library/LaunchAgents/net.pomace.remotesudotouch.agent.plist`
+- `~/Library/LaunchAgents/net.pomace.remotesudotouch.tunnel.plist`
 
 ## Service model
 
