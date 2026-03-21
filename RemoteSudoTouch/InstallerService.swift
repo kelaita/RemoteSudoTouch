@@ -128,11 +128,7 @@ final class InstallerService {
   private let fileManager = FileManager.default
   private let bundleBinaryName = "RemoteSudoTouchAgent"
   private let currentTeamPrefix = "net.pomace.remotesudotouch"
-  private let legacyTeamPrefixes = [
-    "com.paul.remotesudotouch",
-    "com.paul.remotesudotouchagent",
-    "com.paul.touchidsudoinstaller",
-  ]
+  private let legacyTeamPrefixes: [String] = []
   private let supportFolderName = "RemoteSudoTouch"
   private let legacySupportFolderName = "TouchIDSudoBridge"
   private let appScriptPrefix = "RemoteSudoTouch"

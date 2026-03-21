@@ -25,7 +25,7 @@
 
 ## Xcode notes
 
-- Open the project at `/Users/paul/Xcode/RemoteSudoTouch/RemoteSudoTouch.xcodeproj`.
+- Open `RemoteSudoTouch.xcodeproj` in Xcode.
 - App Sandbox is disabled in build settings because the app writes into `~/Library/LaunchAgents` and `~/Library/Application Support`.
 - The app target depends on `RemoteSudoTouchAgent` and embeds its built binary into app resources.
 - Set your signing team in Xcode before archiving.
