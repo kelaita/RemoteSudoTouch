@@ -30,6 +30,25 @@
 - The app target depends on `RemoteSudoTouchAgent` and embeds its built binary into app resources.
 - Set your signing team in Xcode before archiving.
 
+## Packaging
+
+- `scripts/build-pkg.sh` builds a Release archive, creates a component package, and wraps it in a final installer package.
+- By default it produces an unsigned installer in `dist/RemoteSudoTouch-<version>.pkg`.
+- To sign the installer package, set one or both of these environment variables before running it:
+  - `PKG_SIGNING_IDENTITY="Developer ID Installer: ..."`
+  - `APP_SIGNING_IDENTITY="Developer ID Application: ..."`
+- Example:
+
+```bash
+./scripts/build-pkg.sh
+```
+
+```bash
+APP_SIGNING_IDENTITY="Developer ID Application: Pomace Development Group, LLC" \
+PKG_SIGNING_IDENTITY="Developer ID Installer: Pomace Development Group, LLC" \
+./scripts/build-pkg.sh
+```
+
 ## First run checklist
 
 1. Build the project once so the embedded `RemoteSudoTouchAgent` binary exists in the app bundle resources.
