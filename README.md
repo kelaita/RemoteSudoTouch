@@ -1,6 +1,6 @@
 # RemoteSudoTouch
 
-`RemoteSudoTouch` is a macOS SwiftUI installer app for the macOS side of a Touch ID sudo bridge used by Ubuntu over a reverse SSH tunnel.
+`RemoteSudoTouch` is a macOS SwiftUI manager app for the macOS side of a Touch ID sudo bridge used by Ubuntu over a reverse SSH tunnel.
 
 ## Targets
 
@@ -34,11 +34,11 @@
 
 1. Build the project once so the embedded `RemoteSudoTouchAgent` binary exists in the app bundle resources.
 2. Launch the app and fill in the Ubuntu username, hostname, SSH key path, and ports.
-3. Run `Validate SSH` before installing if the host has not been contacted from this Mac yet.
-4. Click `Install / Update` to copy the agent, write LaunchAgents, and reload services.
+3. Run `Validate SSH` before applying configuration if the host has not been contacted from this Mac yet.
+4. Click `Apply Configuration` to copy the agent, write LaunchAgents, and reload services.
 
 ## Limitations
 
-- The installer currently accepts new host keys with `StrictHostKeyChecking=accept-new`.
+- The manager currently accepts new host keys with `StrictHostKeyChecking=accept-new`.
 - The app assumes user-scoped `launchctl bootstrap gui/<uid>`.
 - The binary is copied from built products into app resources; verify the target dependency and copy phase remain intact if you edit the project.

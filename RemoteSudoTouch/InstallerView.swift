@@ -110,10 +110,10 @@ struct InstallerView: View {
         endPoint: .bottomTrailing
       )
     )
-    .alert("Install complete", isPresented: $viewModel.showSuccess) {
+    .alert("Configuration applied", isPresented: $viewModel.showSuccess) {
       Button("OK", role: .cancel) {}
     } message: {
-      Text("The Touch ID agent and all configured reverse tunnel services were installed and refreshed.")
+      Text("The Touch ID agent and all configured reverse tunnel services were updated and refreshed.")
     }
   }
 
@@ -316,7 +316,7 @@ struct InstallerView: View {
         )
 
         HStack(spacing: 12) {
-          Button("Install / Update") {
+          Button("Install") {
             Task { await viewModel.install() }
           }
           .keyboardShortcut(.defaultAction)

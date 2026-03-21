@@ -214,29 +214,42 @@ final class InstallerService {
     try writeTunnelRunnerScripts(configuration: configuration, log: log)
     try writeLaunchAgents(configuration: configuration, log: log)
     try reloadServices(configuration: configuration, log: log)
-    log("Install/update complete.")
+    log("Configuration applied.")
   }
 
   func validateSSH(configuration: InstallerConfiguration, log: (String) -> Void) throws {
     try validate(configuration: configuration)
 
-    for host in configuration.hosts {
-      let output = try runCapture([
-        "/usr/bin/ssh",
-        "-i", configuration.expandedSSHKeyPath,
-        "-o", "BatchMode=yes",
-        "-o", "ConnectTimeout=5",
-        "-o", "StrictHostKeyChecking=accept-new",
-        "\(host.trimmedRemoteUser)@\(host.trimmedRemoteHost)",
-        "echo touchid-sudo-bridge-ok"
-      ])
+    var failedHosts: [String] = []
 
-      log("SSH check succeeded for \(host.displayName): \(output.trimmingCharacters(in: .whitespacesAndNewlines))")
+    for host in configuration.hosts {
+      do {
+        let output = try runCapture([
+          "/usr/bin/ssh",
+          "-i", configuration.expandedSSHKeyPath,
+          "-o", "BatchMode=yes",
+          "-o", "ConnectTimeout=5",
+          "-o", "StrictHostKeyChecking=accept-new",
+          "\(host.trimmedRemoteUser)@\(host.trimmedRemoteHost)",
+          "echo touchid-sudo-bridge-ok"
+        ])
+
+        log("SSH check succeeded for \(host.displayName): \(output.trimmingCharacters(in: .whitespacesAndNewlines))")
+      } catch {
+        failedHosts.append(host.displayName)
+        log("SSH check failed for \(host.displayName): \(error.localizedDescription)")
+      }
+    }
+
+    if !failedHosts.isEmpty {
+      let suffix = failedHosts.count == 1 ? "" : "s"
+      throw InstallerError("SSH validation finished with \(failedHosts.count) failure\(suffix): \(failedHosts.joined(separator: ", "))")
     }
   }
 
   func startServices(configuration: InstallerConfiguration, log: (String) -> Void) throws {
     try validate(configuration: configuration)
+    try ensureInstalledArtifacts(configuration: configuration)
 
     if try isServiceLoaded(label: agentLabel) {
       log("\(agentLabel) is already running.")
@@ -480,6 +493,33 @@ final class InstallerService {
       .filter { $0.lastPathComponent.hasPrefix(prefix) && $0.lastPathComponent.hasSuffix(suffix) }
   }
 
+  private func ensureInstalledArtifacts(configuration: InstallerConfiguration) throws {
+    guard fileManager.fileExists(atPath: agentBinaryURL.path) else {
+      throw InstallerError("RemoteSudoTouch has not been installed yet. Click Install first to copy the agent and write the LaunchAgents.")
+    }
+
+    guard fileManager.fileExists(atPath: agentRunnerScriptURL.path) else {
+      throw InstallerError("RemoteSudoTouch support files are missing. Click Install first to recreate the agent runner.")
+    }
+
+    guard fileManager.fileExists(atPath: agentPlistURL.path) else {
+      throw InstallerError("LaunchAgents have not been written yet. Click Install first before starting services.")
+    }
+
+    for host in configuration.hosts {
+      let scriptURL = tunnelRunnerScriptURL(for: host)
+      let plistURL = tunnelPlistURL(for: host)
+
+      guard fileManager.fileExists(atPath: scriptURL.path) else {
+        throw InstallerError("Tunnel support files are missing for \(host.displayName). Click Install first to recreate them.")
+      }
+
+      guard fileManager.fileExists(atPath: plistURL.path) else {
+        throw InstallerError("The LaunchAgent for \(host.displayName) has not been written yet. Click Install first before starting services.")
+      }
+    }
+  }
+
   private func installBundledAgent(log: (String) -> Void) throws {
     guard let bundledURL = Bundle.main.url(forResource: bundleBinaryName, withExtension: nil) else {
       throw InstallerError("Bundled \(bundleBinaryName) binary is missing from app resources.")
@@ -505,7 +545,7 @@ final class InstallerService {
 
     let data = try JSONEncoder.pretty.encode(payload)
     try data.write(to: configFileURL, options: .atomic)
-    log("Wrote installer configuration snapshot.")
+    log("Wrote configuration snapshot.")
   }
 
   private func writeAgentRunnerScript(configuration: InstallerConfiguration, log: (String) -> Void) throws {
