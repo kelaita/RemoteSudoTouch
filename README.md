@@ -5,6 +5,9 @@
 The Linux helper package lives here:
 [RemoteSudoTouchLinux](https://github.com/kelaita/RemoteSudoTouchLinux)
 
+The macOS `rsudo` wrapper client lives here:
+[RemoteSudoTouchMacos](https://github.com/kelaita/RemoteSudoTouchMacos)
+
 ## Targets
 
 - `RemoteSudoTouch`: macOS SwiftUI app that installs and manages the bridge.
@@ -58,7 +61,7 @@ PKG_SIGNING_IDENTITY="Developer ID Installer: Pomace Development Group, LLC" \
 1. Build the project once so the embedded `RemoteSudoTouchAgent` binary exists in the app bundle resources.
 2. Launch the app and fill in the Linux username, hostname, SSH key path, and ports.
 3. Run `Validate SSH` before applying configuration if the host has not been contacted from this Mac yet.
-4. Click `Apply Configuration` to copy the agent, write LaunchAgents, and reload services.
+4. Click `Install` to copy the agent, write LaunchAgents, and reload services.
 
 ## Limitations
 
