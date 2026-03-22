@@ -1,8 +1,9 @@
 // !$*UTF8*$!
 {
-	objectVersion = 56;
+	archiveVersion = 1;
 	classes = {
 	};
+	objectVersion = 56;
 	objects = {
 
 /* Begin PBXBuildFile section */
@@ -11,7 +12,7 @@
 		A10000000000000000000003 /* InstallerViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000013 /* InstallerViewModel.swift */; };
 		A10000000000000000000004 /* InstallerService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000014 /* InstallerService.swift */; };
 		A10000000000000000000005 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000015 /* Assets.xcassets */; };
-		A10000000000000000000006 /* RemoteSudoTouchAgent in Resources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000018 /* RemoteSudoTouchAgent */; };
+		A10000000000000000000006 /* RemoteSudoTouchAgent in Embed Agent Binary */ = {isa = PBXBuildFile; fileRef = A10000000000000000000018 /* RemoteSudoTouchAgent */; };
 		A10000000000000000000007 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000017 /* main.swift */; };
 /* End PBXBuildFile section */
 
@@ -21,7 +22,7 @@
 			containerPortal = A10000000000000000000024 /* Project object */;
 			proxyType = 1;
 			remoteGlobalIDString = A10000000000000000000051;
-			remoteInfo = "RemoteSudoTouchAgent";
+			remoteInfo = RemoteSudoTouchAgent;
 		};
 /* End PBXContainerItemProxy section */
 
@@ -32,7 +33,7 @@
 			dstPath = "";
 			dstSubfolderSpec = 7;
 			files = (
-				A10000000000000000000006 /* RemoteSudoTouchAgent in Resources */,
+				A10000000000000000000006 /* RemoteSudoTouchAgent in Embed Agent Binary */,
 			);
 			name = "Embed Agent Binary";
 			runOnlyForDeploymentPostprocessing = 0;
@@ -232,16 +233,17 @@
 				CODE_SIGN_ENTITLEMENTS = "";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2026032101;
 				ENABLE_APP_SANDBOX = NO;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = RemoteSudoTouch;
-				INFOPLIST_KEY_LSApplicationCategoryType = public.app-category.utilities;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = net.pomace.RemoteSudoTouch;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = macosx;
@@ -259,16 +261,17 @@
 				CODE_SIGN_ENTITLEMENTS = "";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2026032101;
 				ENABLE_APP_SANDBOX = NO;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = RemoteSudoTouch;
-				INFOPLIST_KEY_LSApplicationCategoryType = public.app-category.utilities;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = net.pomace.RemoteSudoTouch;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = macosx;

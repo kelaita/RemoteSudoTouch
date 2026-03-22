@@ -82,6 +82,23 @@ struct InstallerView: View {
     }
   }
 
+  private var appVersionText: String {
+    let info = Bundle.main.infoDictionary ?? [:]
+    let shortVersion = info["CFBundleShortVersionString"] as? String
+    let buildNumber = info["CFBundleVersion"] as? String
+
+    switch (shortVersion, buildNumber) {
+    case let (version?, build?) where !version.isEmpty && !build.isEmpty:
+      return "Version \(version) (\(build))"
+    case let (version?, _) where !version.isEmpty:
+      return "Version \(version)"
+    case let (_, build?) where !build.isEmpty:
+      return "Build \(build)"
+    default:
+      return "Development Build"
+    }
+  }
+
   var body: some View {
     ScrollViewReader { proxy in
       ScrollView {
@@ -92,6 +109,7 @@ struct InstallerView: View {
           serviceSection
           actionsSection
           statusSection
+          footer
         }
         .padding(18)
       }
@@ -407,6 +425,17 @@ struct InstallerView: View {
       }
     }
     .id("status-section")
+  }
+
+  private var footer: some View {
+    HStack {
+      Spacer()
+      Text(appVersionText)
+        .font(.system(.caption, design: .monospaced))
+        .foregroundStyle(.secondary)
+        .textSelection(.enabled)
+        .padding(.horizontal, 6)
+    }
   }
 
   private func sectionCard<Content: View>(title: String, systemImage: String, @ViewBuilder content: () -> Content) -> some View {
