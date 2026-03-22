@@ -6,7 +6,9 @@ struct InstallerView: View {
   @Environment(\.colorScheme) private var colorScheme
 
   private let accentGreen = Color(nsColor: NSColor(calibratedRed: 0.12, green: 0.53, blue: 0.28, alpha: 1.0))
+  private let accentGreenSoft = Color(nsColor: NSColor(calibratedRed: 0.42, green: 0.76, blue: 0.54, alpha: 1.0))
   private let accentRed = Color(nsColor: NSColor(calibratedRed: 0.70, green: 0.19, blue: 0.18, alpha: 1.0))
+  private let accentRedSoft = Color(nsColor: NSColor(calibratedRed: 0.90, green: 0.49, blue: 0.47, alpha: 1.0))
   private let accentBlue = Color(nsColor: NSColor(calibratedRed: 0.15, green: 0.39, blue: 0.69, alpha: 1.0))
   private let accentAmber = Color(nsColor: NSColor(calibratedRed: 0.74, green: 0.49, blue: 0.12, alpha: 1.0))
 
@@ -353,14 +355,14 @@ struct InstallerView: View {
             Task { await viewModel.startServices() }
           }
           .buttonStyle(.borderedProminent)
-          .tint(accentGreen)
+          .tint(accentGreenSoft)
           .disabled(viewModel.isBusy)
 
           Button("Stop") {
             Task { await viewModel.stopServices() }
           }
-          .buttonStyle(.bordered)
-          .tint(accentRed)
+          .buttonStyle(.borderedProminent)
+          .tint(accentRedSoft)
           .disabled(viewModel.isBusy)
 
           Button("Reload") {
