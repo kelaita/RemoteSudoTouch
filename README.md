@@ -1,6 +1,6 @@
 # RemoteSudoTouch
 
-`RemoteSudoTouch` is a macOS SwiftUI manager app for the macOS side of a Touch ID sudo bridge used by Linux over a reverse SSH tunnel.
+`RemoteSudoTouch` is a macOS SwiftUI manager app for the macOS side of a Touch ID sudo bridge used by a Linux or macOS server over a reverse SSH tunnel.
 
 The Linux helper package lives here:
 [RemoteSudoTouchLinux](https://github.com/kelaita/RemoteSudoTouchLinux)
