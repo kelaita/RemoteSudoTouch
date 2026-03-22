@@ -2,7 +2,7 @@
 
 `RemoteSudoTouch` is a macOS SwiftUI manager app for the macOS side of a Touch ID sudo bridge used by a Linux or macOS server over a reverse SSH tunnel.
 
-The problem this is solving: you're on your Mac and your SSH'ed into a remote Mac or Linux server.  Any sudo calls on those remote servers will prompt you with the local touchID dialog box on your local Mac.
+The problem this is solving: you're on your Mac and you're SSH'ed into a remote Mac or Linux server.  Any sudo calls on those remote servers will prompt you with the local touchID dialog box on your local Mac to approve the sudo.
 
 The Linux helper package lives here:
 [RemoteSudoTouchLinux](https://github.com/kelaita/RemoteSudoTouchLinux)
