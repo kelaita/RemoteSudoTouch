@@ -37,6 +37,7 @@ The Linux helper package lives here:
 
 - `scripts/build-pkg.sh` builds a Release archive, creates a component package, and wraps it in a final installer package.
 - By default it produces an unsigned installer in `dist/RemoteSudoTouch-<version>.pkg`.
+- The repo may also already include a prebuilt installer in `dist/`, which can be used directly without rebuilding the package first.
 - To sign the installer package, set one or both of these environment variables before running it:
   - `PKG_SIGNING_IDENTITY="Developer ID Installer: ..."`
   - `APP_SIGNING_IDENTITY="Developer ID Application: ..."`
