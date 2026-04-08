@@ -4,11 +4,23 @@
 
 The problem this is solving: you're on your Mac and you're SSH'ed into a remote Mac or Linux server.  Any sudo calls on those remote servers will prompt you with the local Touch ID dialog box on your local Mac to approve the sudo.
 
+![RemoteSudoTouch screenshot](docs/images/RemoteSudoTouch.png)
+
 The Linux helper package lives here:
 [RemoteSudoTouchLinux](https://github.com/kelaita/RemoteSudoTouchLinux)
 
 The macOS `rsudo` wrapper client lives here:
 [RemoteSudoTouchMacos](https://github.com/kelaita/RemoteSudoTouchMacos)
+
+## Quick start
+
+If you just want to try the app, you do not need to build it from source.
+
+This repo may already include a prebuilt installer package in `dist/`:
+
+- `dist/RemoteSudoTouch-<version>.pkg`
+
+You can install that `.pkg` directly and skip the Xcode build step.
 
 ## Targets
 
