@@ -10,7 +10,7 @@ final class InstallerViewModel: ObservableObject {
   @Published var hosts: [TunnelHost] = [TunnelHost()]
   @Published var selectedHostID: String?
   @Published var statusLines: [String] = ["Ready."]
-  @Published var serviceStatus = ServiceStatusSnapshot(agentRunning: false, runningTunnels: 0, totalTunnels: 0)
+  @Published var serviceStatus = ServiceStatusSnapshot(agentRunning: false, tunnelStatuses: [])
   @Published var statusRevealToken = UUID()
   @Published var isBusy = false
   @Published var showSuccess = false

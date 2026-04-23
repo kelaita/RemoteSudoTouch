@@ -108,13 +108,48 @@ enum ServiceHealth {
   case running
 }
 
+struct TunnelServiceStatus: Identifiable {
+  let host: TunnelHost
+  let isLoaded: Bool
+  let isRunning: Bool
+  let issue: String?
+
+  var id: String { host.id }
+
+  var displayName: String { host.displayName }
+
+  var isHealthy: Bool {
+    isLoaded && isRunning && issue == nil
+  }
+}
+
 struct ServiceStatusSnapshot {
   let agentRunning: Bool
-  let runningTunnels: Int
-  let totalTunnels: Int
+  let tunnelStatuses: [TunnelServiceStatus]
+
+  var runningTunnels: Int {
+    tunnelStatuses.filter(\.isLoaded).count
+  }
+
+  var healthyTunnels: Int {
+    tunnelStatuses.filter(\.isHealthy).count
+  }
+
+  var totalTunnels: Int {
+    tunnelStatuses.count
+  }
+
+  var issueSummaries: [String] {
+    tunnelStatuses.compactMap { status in
+      guard let issue = status.issue else {
+        return nil
+      }
+      return "\(status.displayName): \(issue)"
+    }
+  }
 
   var health: ServiceHealth {
-    if agentRunning && runningTunnels == totalTunnels {
+    if agentRunning && healthyTunnels == totalTunnels {
       return .running
     }
     if agentRunning || runningTunnels > 0 {
@@ -334,14 +369,11 @@ final class InstallerService {
 
   func currentServiceStatus(configuration: InstallerConfiguration) -> ServiceStatusSnapshot {
     let agentRunning = (try? isServiceLoaded(label: agentLabel)) ?? false
-    let runningTunnels = configuration.hosts.filter { host in
-      ((try? isServiceLoaded(label: tunnelLabel(for: host))) ?? false)
-    }.count
+    let tunnelStatuses = configuration.hosts.map(tunnelStatus(for:))
 
     return ServiceStatusSnapshot(
       agentRunning: agentRunning,
-      runningTunnels: runningTunnels,
-      totalTunnels: configuration.hosts.count
+      tunnelStatuses: tunnelStatuses
     )
   }
 
@@ -559,14 +591,89 @@ final class InstallerService {
     for host in configuration.hosts {
       let script = """
       #!/bin/zsh
-      exec /usr/bin/ssh -NT \
+      set -u
+
+      SSH_KEY="\(configuration.expandedSSHKeyPath)"
+      REMOTE_TARGET="\(host.trimmedRemoteUser)@\(host.trimmedRemoteHost)"
+      REMOTE_PORT="\(host.remoteListenPort)"
+      LOCAL_PORT="\(configuration.localAgentPort)"
+      SSH_PID=""
+
+      log() {
+        print -r -- "$(date -u '+%Y-%m-%dT%H:%M:%SZ') $*"
+      }
+
+      cleanup() {
+        if [[ -n "${SSH_PID:-}" ]] && kill -0 "$SSH_PID" 2>/dev/null; then
+          kill "$SSH_PID" 2>/dev/null || true
+          wait "$SSH_PID" 2>/dev/null || true
+        fi
+      }
+
+      health_check() {
+        local request_id="health-$(date +%s)-$$"
+        local payload='{"request_id":"'"${request_id}"'","timestamp":0,"hostname":"mac","user":"health","service":"remote-sudo-touch","tty":"","rhost":"","type":"health_check"}'
+        local remote_command="printf '%s\\n' '$payload' | nc -w 5 127.0.0.1 $REMOTE_PORT"
+        local response
+
+        response=$(/usr/bin/ssh \
+          -i "$SSH_KEY" \
+          -o BatchMode=yes \
+          -o ConnectTimeout=5 \
+          -o StrictHostKeyChecking=accept-new \
+          -o ControlMaster=no \
+          -o ControlPath=none \
+          "$REMOTE_TARGET" \
+          "$remote_command" 2>/dev/null) || return 1
+
+        [[ "$response" == *"\\"request_id\\":\\"$request_id\\""* && "$response" == *"\\"approved\\":true"* ]]
+      }
+
+      trap cleanup EXIT INT TERM
+
+      log "starting reverse tunnel for $REMOTE_TARGET on remote port $REMOTE_PORT"
+      /usr/bin/ssh -NT \
+        -o BatchMode=yes \
+        -o ConnectTimeout=10 \
+        -o ConnectionAttempts=1 \
         -o ExitOnForwardFailure=yes \
-        -o ServerAliveInterval=30 \
-        -o ServerAliveCountMax=3 \
+        -o ServerAliveInterval=10 \
+        -o ServerAliveCountMax=1 \
+        -o TCPKeepAlive=yes \
         -o StrictHostKeyChecking=accept-new \
-        -i "\(configuration.expandedSSHKeyPath)" \
-        -R 127.0.0.1:\(host.remoteListenPort):127.0.0.1:\(configuration.localAgentPort) \
-        "\(host.trimmedRemoteUser)@\(host.trimmedRemoteHost)"
+        -o ControlMaster=no \
+        -o ControlPath=none \
+        -i "$SSH_KEY" \
+        -R "127.0.0.1:$REMOTE_PORT:127.0.0.1:$LOCAL_PORT" \
+        "$REMOTE_TARGET" &
+      SSH_PID=$!
+
+      sleep 3
+      if ! kill -0 "$SSH_PID" 2>/dev/null; then
+        wait "$SSH_PID"
+        exit $?
+      fi
+
+      failures=0
+      while kill -0 "$SSH_PID" 2>/dev/null; do
+        if health_check; then
+          failures=0
+        else
+          failures=$((failures + 1))
+          log "reverse tunnel health check failed ($failures/2)"
+        fi
+
+        if (( failures >= 2 )); then
+          log "reverse tunnel appears stale; exiting so launchd can restart it"
+          kill "$SSH_PID" 2>/dev/null || true
+          wait "$SSH_PID" 2>/dev/null || true
+          exit 1
+        fi
+
+        sleep 30
+      done
+
+      wait "$SSH_PID"
       """
 
       let url = tunnelRunnerScriptURL(for: host)
@@ -630,6 +737,98 @@ final class InstallerService {
 
   private func tunnelLabel(for host: TunnelHost) -> String {
     "\(currentTeamPrefix).tunnel.\(host.fileSlug)"
+  }
+
+  private func tunnelErrorLogURL(for host: TunnelHost) -> URL {
+    logsDir.appendingPathComponent("\(appScriptPrefix)-ssh-tunnel-\(host.fileSlug).err.log")
+  }
+
+  private func tunnelOutputLogURL(for host: TunnelHost) -> URL {
+    logsDir.appendingPathComponent("\(appScriptPrefix)-ssh-tunnel-\(host.fileSlug).out.log")
+  }
+
+  private func tunnelStatus(for host: TunnelHost) -> TunnelServiceStatus {
+    let label = tunnelLabel(for: host)
+    let launchctlOutput = (try? launchctlPrint(label: label)) ?? ""
+    let isLoaded = !launchctlOutput.isEmpty
+    let isRunning = launchctlOutput.contains("state = running")
+
+    let issue = tunnelIssue(
+      host: host,
+      launchctlOutput: launchctlOutput,
+      stderrTail: recentLogTail(at: tunnelErrorLogURL(for: host)),
+      stdoutTail: recentLogTail(at: tunnelOutputLogURL(for: host))
+    )
+
+    return TunnelServiceStatus(
+      host: host,
+      isLoaded: isLoaded,
+      isRunning: isRunning,
+      issue: issue
+    )
+  }
+
+  private func tunnelIssue(host: TunnelHost, launchctlOutput: String, stderrTail: String, stdoutTail: String) -> String? {
+    if launchctlOutput.isEmpty {
+      return "not loaded"
+    }
+
+    if stderrTail.contains("remote port forwarding failed for listen port") {
+      return "remote port \(host.remoteListenPort) is already occupied on the server"
+    }
+
+    if stderrTail.localizedCaseInsensitiveContains("operation timed out")
+      || stderrTail.localizedCaseInsensitiveContains("connection timed out")
+    {
+      return "ssh connection timed out"
+    }
+
+    if stderrTail.localizedCaseInsensitiveContains("connection refused") {
+      return "ssh connection refused"
+    }
+
+    if stderrTail.localizedCaseInsensitiveContains("permission denied") {
+      return "ssh authentication failed"
+    }
+
+    if stdoutTail.contains("reverse tunnel appears stale") || stdoutTail.contains("reverse tunnel health check failed") {
+      return "tunnel health checks are failing"
+    }
+
+    if launchctlOutput.contains("state = spawn scheduled") {
+      return "launchd is retrying after a tunnel failure"
+    }
+
+    if launchctlOutput.contains("last exit code = 255") {
+      return "ssh exited with code 255"
+    }
+
+    if !launchctlOutput.contains("state = running") {
+      return "service is not running"
+    }
+
+    return nil
+  }
+
+  private func recentLogTail(at url: URL, maxLines: Int = 20) -> String {
+    guard let data = try? Data(contentsOf: url),
+          let text = String(data: data, encoding: .utf8) else {
+      return ""
+    }
+
+    let lines = text
+      .split(whereSeparator: \.isNewline)
+      .suffix(maxLines)
+
+    return lines.joined(separator: "\n")
+  }
+
+  private func launchctlPrint(label: String) throws -> String {
+    try runCapture([
+      "/bin/launchctl",
+      "print",
+      "gui/\(getuid())/\(label)"
+    ])
   }
 
   private func isServiceLoaded(label: String) throws -> Bool {

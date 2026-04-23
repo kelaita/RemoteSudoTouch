@@ -84,6 +84,17 @@ struct InstallerView: View {
     }
   }
 
+  private var serviceStatusDetailText: String {
+    "Agent: \(viewModel.serviceStatus.agentRunning ? "running" : "stopped") | Healthy tunnels: \(viewModel.serviceStatus.healthyTunnels)/\(viewModel.serviceStatus.totalTunnels)"
+  }
+
+  private var serviceIssueText: String? {
+    guard !viewModel.serviceStatus.issueSummaries.isEmpty else {
+      return nil
+    }
+    return viewModel.serviceStatus.issueSummaries.joined(separator: " | ")
+  }
+
   private var appVersionText: String {
     let info = Bundle.main.infoDictionary ?? [:]
     let shortVersion = info["CFBundleShortVersionString"] as? String
@@ -323,9 +334,15 @@ struct InstallerView: View {
           VStack(alignment: .leading, spacing: 2) {
             Text(serviceStatusText)
               .font(.system(size: 13, weight: .semibold))
-            Text("Agent: \(viewModel.serviceStatus.agentRunning ? "running" : "stopped") | Tunnels: \(viewModel.serviceStatus.runningTunnels)/\(viewModel.serviceStatus.totalTunnels)")
+            Text(serviceStatusDetailText)
               .font(.caption)
               .foregroundStyle(.secondary)
+            if let issueText = serviceIssueText {
+              Text(issueText)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(3)
+            }
           }
         }
         .padding(.horizontal, 12)

@@ -102,6 +102,10 @@ final class TouchIDAgentServer {
   }
 
   private func authorize(request: TouchIDRequest) -> TouchIDResponse {
+    if request.type == "health_check" {
+      return TouchIDResponse(request_id: request.request_id, approved: true, reason: nil)
+    }
+
     let semaphore = DispatchSemaphore(value: 0)
     let context = LAContext()
     context.localizedCancelTitle = "Deny"
