@@ -10,7 +10,7 @@ struct TunnelHost: Codable, Equatable, Identifiable {
   init(
     id: String = UUID().uuidString,
     name: String = "",
-    remoteUser: String = "ubuntu",
+    remoteUser: String = "",
     remoteHost: String = "",
     remoteListenPort: String = "9876"
   ) {
@@ -148,6 +148,12 @@ struct ServiceStatusSnapshot {
     }
   }
 
+  var healthyTunnelNames: [String] {
+    tunnelStatuses
+      .filter(\.isHealthy)
+      .map(\.displayName)
+  }
+
   var health: ServiceHealth {
     if agentRunning && healthyTunnels == totalTunnels {
       return .running
@@ -238,7 +244,7 @@ final class InstallerService {
     try validate(configuration: configuration)
     try ensureDirectories(log: log)
     try removeLegacyArtifacts(log: log)
-    try removeCurrentTunnelArtifacts(log: log)
+    try removeCurrentTunnelArtifacts(keeping: configuration.hosts, log: log)
     try installBundledAgent(log: log)
     try writeConfig(configuration: configuration, log: log)
     try writeAgentRunnerScript(configuration: configuration, log: log)
@@ -377,6 +383,25 @@ final class InstallerService {
     )
   }
 
+  func hasInstalledArtifacts(for configuration: InstallerConfiguration) -> Bool {
+    if !fileManager.fileExists(atPath: agentBinaryURL.path)
+      || !fileManager.fileExists(atPath: agentRunnerScriptURL.path)
+      || !fileManager.fileExists(atPath: agentPlistURL.path)
+    {
+      return false
+    }
+
+    for host in configuration.hosts {
+      if !fileManager.fileExists(atPath: tunnelRunnerScriptURL(for: host).path)
+        || !fileManager.fileExists(atPath: tunnelPlistURL(for: host).path)
+      {
+        return false
+      }
+    }
+
+    return true
+  }
+
   func removeInstalledArtifacts(configuration: InstallerConfiguration, log: (String) -> Void) throws {
     for label in legacyLabels + currentKnownLabels(configuration: configuration) {
       try bootout(label: label)
@@ -478,7 +503,16 @@ final class InstallerService {
     }
   }
 
-  private func removeCurrentTunnelArtifacts(log: (String) -> Void) throws {
+  private func removeCurrentTunnelArtifacts(keeping hosts: [TunnelHost] = [], log: (String) -> Void) throws {
+    let labelsToKeep = Set(hosts.map(tunnelLabel(for:)))
+    let scriptsToKeep = Set(hosts.map { tunnelRunnerScriptURL(for: $0).lastPathComponent })
+    let logNamesToKeep = Set(hosts.flatMap { host in
+      [
+        tunnelErrorLogURL(for: host).lastPathComponent,
+        tunnelOutputLogURL(for: host).lastPathComponent
+      ]
+    })
+
     let currentTunnelPlists = try matchingURLs(
       in: launchAgentsDir,
       prefix: "\(currentTeamPrefix).tunnel",
@@ -486,6 +520,9 @@ final class InstallerService {
     )
     for url in currentTunnelPlists {
       let label = url.deletingPathExtension().lastPathComponent
+      if labelsToKeep.contains(label) {
+        continue
+      }
       try bootout(label: label)
       try fileManager.removeItem(at: url)
       log("Removed stale tunnel LaunchAgent \(url.lastPathComponent).")
@@ -497,6 +534,9 @@ final class InstallerService {
       suffix: ".sh"
     )
     for url in currentTunnelScripts {
+      if scriptsToKeep.contains(url.lastPathComponent) {
+        continue
+      }
       try fileManager.removeItem(at: url)
       log("Removed stale tunnel script \(url.lastPathComponent).")
     }
@@ -507,6 +547,9 @@ final class InstallerService {
       suffix: ".log"
     )
     for url in staleTunnelLogs {
+      if logNamesToKeep.contains(url.lastPathComponent) {
+        continue
+      }
       try fileManager.removeItem(at: url)
       log("Removed stale tunnel log \(url.lastPathComponent).")
     }
@@ -773,38 +816,46 @@ final class InstallerService {
       return "not loaded"
     }
 
-    if stderrTail.contains("remote port forwarding failed for listen port") {
-      return "remote port \(host.remoteListenPort) is already occupied on the server"
+    if !launchctlOutput.contains("state = running") {
+      if stderrTail.contains("remote port forwarding failed for listen port") {
+        return "remote port \(host.remoteListenPort) is already occupied on the server"
+      }
+
+      if stderrTail.localizedCaseInsensitiveContains("operation timed out")
+        || stderrTail.localizedCaseInsensitiveContains("connection timed out")
+      {
+        return "ssh connection timed out"
+      }
+
+      if stderrTail.localizedCaseInsensitiveContains("connection refused") {
+        return "ssh connection refused"
+      }
+
+      if stderrTail.localizedCaseInsensitiveContains("permission denied") {
+        return "ssh authentication failed"
+      }
+
+      if stdoutTail.contains("reverse tunnel appears stale") || stdoutTail.contains("reverse tunnel health check failed") {
+        return "tunnel health checks are failing"
+      }
+
+      if launchctlOutput.contains("state = spawn scheduled") {
+        return "launchd is retrying after a tunnel failure"
+      }
+
+      if launchctlOutput.contains("last exit code = 255") {
+        return "ssh exited with code 255"
+      }
+
+      return "service is not running"
     }
 
-    if stderrTail.localizedCaseInsensitiveContains("operation timed out")
-      || stderrTail.localizedCaseInsensitiveContains("connection timed out")
-    {
-      return "ssh connection timed out"
-    }
-
-    if stderrTail.localizedCaseInsensitiveContains("connection refused") {
-      return "ssh connection refused"
-    }
-
-    if stderrTail.localizedCaseInsensitiveContains("permission denied") {
-      return "ssh authentication failed"
-    }
-
-    if stdoutTail.contains("reverse tunnel appears stale") || stdoutTail.contains("reverse tunnel health check failed") {
+    if stdoutTail.contains("reverse tunnel appears stale") {
       return "tunnel health checks are failing"
     }
 
-    if launchctlOutput.contains("state = spawn scheduled") {
-      return "launchd is retrying after a tunnel failure"
-    }
-
-    if launchctlOutput.contains("last exit code = 255") {
-      return "ssh exited with code 255"
-    }
-
-    if !launchctlOutput.contains("state = running") {
-      return "service is not running"
+    if stderrTail.contains("remote port forwarding failed for listen port") {
+      return nil
     }
 
     return nil

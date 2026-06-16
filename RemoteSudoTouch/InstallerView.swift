@@ -88,11 +88,8 @@ struct InstallerView: View {
     "Agent: \(viewModel.serviceStatus.agentRunning ? "running" : "stopped") | Healthy tunnels: \(viewModel.serviceStatus.healthyTunnels)/\(viewModel.serviceStatus.totalTunnels)"
   }
 
-  private var serviceIssueText: String? {
-    guard !viewModel.serviceStatus.issueSummaries.isEmpty else {
-      return nil
-    }
-    return viewModel.serviceStatus.issueSummaries.joined(separator: " | ")
+  private var serviceIssueItems: [String] {
+    viewModel.serviceStatus.issueSummaries
   }
 
   private var appVersionText: String {
@@ -213,25 +210,39 @@ struct InstallerView: View {
     sectionCard(title: "Remote Servers", systemImage: "server.rack") {
       HStack(alignment: .top, spacing: 16) {
         VStack(alignment: .leading, spacing: 10) {
-          List(selection: $viewModel.selectedHostID) {
-            ForEach($viewModel.hosts) { $host in
-              VStack(alignment: .leading, spacing: 3) {
-                Text(host.displayName)
-                  .font(.system(size: 13, weight: .semibold))
-                Text("\(host.remoteUser.isEmpty ? "ubuntu" : host.remoteUser)@\(host.remoteHost.isEmpty ? "<hostname>" : host.remoteHost):\(host.remoteListenPort)")
-                  .font(.caption)
-                  .foregroundStyle(.secondary)
+          ScrollViewReader { proxy in
+            List(selection: $viewModel.selectedHostID) {
+              ForEach($viewModel.hosts) { $host in
+                VStack(alignment: .leading, spacing: 3) {
+                  Text(host.displayName)
+                    .font(.system(size: 13, weight: .semibold))
+                  Text("\(host.remoteUser.isEmpty ? "<ssh user>" : host.remoteUser)@\(host.remoteHost.isEmpty ? "<hostname or alias>" : host.remoteHost):\(host.remoteListenPort)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
+                .padding(.vertical, 2)
+                .tag(host.id)
+                .id(host.id)
               }
-              .padding(.vertical, 2)
-              .tag(host.id)
+            }
+            .frame(minWidth: 260, minHeight: 180)
+            .scrollContentBackground(.hidden)
+            .background(
+              RoundedRectangle(cornerRadius: 14)
+                .fill(Color(nsColor: .textBackgroundColor).opacity(0.55))
+            )
+            .onChange(of: viewModel.selectedHostID) { _, selectedHostID in
+              guard let selectedHostID else {
+                return
+              }
+
+              DispatchQueue.main.async {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                  proxy.scrollTo(selectedHostID, anchor: .center)
+                }
+              }
             }
           }
-          .frame(minWidth: 260, minHeight: 180)
-          .scrollContentBackground(.hidden)
-          .background(
-            RoundedRectangle(cornerRadius: 14)
-              .fill(Color(nsColor: .textBackgroundColor).opacity(0.55))
-          )
 
           HStack(spacing: 10) {
             Button("Add Server") {
@@ -260,19 +271,19 @@ struct InstallerView: View {
             Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 14) {
               GridRow {
                 fieldLabel("Display name")
-                TextField("prod-db", text: $viewModel.hosts[selectedHostIndex].name)
+                TextField("Friendly name for this server", text: $viewModel.hosts[selectedHostIndex].name)
                   .textFieldStyle(.roundedBorder)
               }
 
               GridRow {
                 fieldLabel("Remote user")
-                TextField("ubuntu", text: $viewModel.hosts[selectedHostIndex].remoteUser)
+                TextField("SSH username on the remote server", text: $viewModel.hosts[selectedHostIndex].remoteUser)
                   .textFieldStyle(.roundedBorder)
               }
 
               GridRow {
                 fieldLabel("Remote host")
-                TextField("server.example.com", text: $viewModel.hosts[selectedHostIndex].remoteHost)
+                TextField("server.example.com or ssh alias", text: $viewModel.hosts[selectedHostIndex].remoteHost)
                   .textFieldStyle(.roundedBorder)
               }
 
@@ -284,10 +295,10 @@ struct InstallerView: View {
               }
             }
 
-            Text("Each server gets its own reverse SSH tunnel LaunchAgent. The local Touch ID agent is shared.")
+            Text("Each server gets its own reverse SSH tunnel LaunchAgent. The local Touch ID agent is shared. You can use a Host alias from ~/.ssh/config here if the username matches.")
               .font(.caption)
               .foregroundStyle(.secondary)
-              .lineLimit(2)
+              .fixedSize(horizontal: false, vertical: true)
               .padding(.top, 4)
           } else {
             Text("Select a server to edit its connection details.")
@@ -327,82 +338,73 @@ struct InstallerView: View {
 
   private var actionsSection: some View {
     sectionCard(title: "Actions", systemImage: "bolt.circle") {
-      HStack(alignment: .center, spacing: 14) {
-        HStack(spacing: 10) {
+      VStack(alignment: .leading, spacing: 14) {
+        HStack(alignment: .top, spacing: 10) {
           Image(systemName: serviceStatusIcon)
             .foregroundStyle(serviceStatusColor)
-          VStack(alignment: .leading, spacing: 2) {
+            .font(.system(size: 22))
+
+          VStack(alignment: .leading, spacing: 4) {
             Text(serviceStatusText)
               .font(.system(size: 13, weight: .semibold))
             Text(serviceStatusDetailText)
               .font(.caption)
               .foregroundStyle(.secondary)
-            if let issueText = serviceIssueText {
-              Text(issueText)
+
+            if !serviceIssueItems.isEmpty {
+              VStack(alignment: .leading, spacing: 2) {
+                ForEach(serviceIssueItems, id: \.self) { issue in
+                  Text(issue)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                }
+              }
+            } else if !viewModel.serviceStatus.healthyTunnelNames.isEmpty {
+              Text("Healthy: \(viewModel.serviceStatus.healthyTunnelNames.joined(separator: ", "))")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-                .lineLimit(3)
+                .fixedSize(horizontal: false, vertical: true)
             }
           }
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(
           RoundedRectangle(cornerRadius: 14)
             .fill(serviceStatusColor.opacity(0.10))
         )
 
-        HStack(spacing: 12) {
-          Button("Install") {
+        FlowLayout(spacing: 10, lineSpacing: 10) {
+          actionButton(viewModel.installButtonTitle, tint: accentGreen, prominent: true) {
             Task { await viewModel.install() }
           }
           .keyboardShortcut(.defaultAction)
-          .buttonStyle(.borderedProminent)
-          .tint(accentGreen)
-          .disabled(viewModel.isBusy)
 
-          Button("Validate SSH") {
+          actionButton("Validate SSH", tint: accentBlue) {
             Task { await viewModel.validateSetup() }
           }
-          .buttonStyle(.bordered)
-          .tint(accentBlue)
-          .disabled(viewModel.isBusy)
 
-          Button("Start") {
+          actionButton("Start", tint: accentGreenSoft, prominent: true) {
             Task { await viewModel.startServices() }
           }
-          .buttonStyle(.borderedProminent)
-          .tint(accentGreenSoft)
-          .disabled(viewModel.isBusy)
 
-          Button("Stop") {
+          actionButton("Stop", tint: accentRedSoft, prominent: true) {
             Task { await viewModel.stopServices() }
           }
-          .buttonStyle(.borderedProminent)
-          .tint(accentRedSoft)
-          .disabled(viewModel.isBusy)
 
-          Button("Reload") {
+          actionButton("Reload", tint: accentAmber) {
             Task { await viewModel.reloadServices() }
           }
-          .buttonStyle(.bordered)
-          .tint(accentAmber)
-          .disabled(viewModel.isBusy)
 
-          Button("Uninstall", role: .destructive) {
+          actionButton("Uninstall", tint: accentRed, prominent: true, role: .destructive) {
             Task { await viewModel.uninstall() }
           }
-          .buttonStyle(.borderedProminent)
-          .tint(accentRed)
-          .disabled(viewModel.isBusy)
 
-          Spacer(minLength: 0)
-
-          Button("Open Support Folder") {
+          actionButton("Open Support Folder") {
             NSWorkspace.shared.open(viewModel.supportDir)
           }
-          .buttonStyle(.bordered)
-          .disabled(viewModel.isBusy)
         }
       }
     }
@@ -457,6 +459,33 @@ struct InstallerView: View {
     }
   }
 
+  private func actionButton(
+    _ title: String,
+    tint: Color? = nil,
+    prominent: Bool = false,
+    role: ButtonRole? = nil,
+    action: @escaping () -> Void
+  ) -> some View {
+    Group {
+      if prominent {
+        Button(role: role, action: action) {
+          Text(title)
+            .lineLimit(1)
+        }
+        .buttonStyle(.borderedProminent)
+      } else {
+        Button(role: role, action: action) {
+          Text(title)
+            .lineLimit(1)
+        }
+        .buttonStyle(.bordered)
+      }
+    }
+    .tint(tint)
+    .disabled(viewModel.isBusy)
+    .controlSize(.large)
+  }
+
   private func sectionCard<Content: View>(title: String, systemImage: String, @ViewBuilder content: () -> Content) -> some View {
     VStack(alignment: .leading, spacing: 10) {
       Label(title, systemImage: systemImage)
@@ -502,6 +531,73 @@ struct InstallerView: View {
 
     DispatchQueue.main.async {
       proxy.scrollTo(lastIndex, anchor: .bottom)
+    }
+  }
+}
+
+private struct FlowLayout: Layout {
+  var spacing: CGFloat = 8
+  var lineSpacing: CGFloat = 8
+
+  func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+    let maxWidth = proposal.width ?? .infinity
+    var currentX: CGFloat = 0
+    var currentRowHeight: CGFloat = 0
+    var totalHeight: CGFloat = 0
+    var maxRowWidth: CGFloat = 0
+
+    for subview in subviews {
+      let size = subview.sizeThatFits(.unspecified)
+      let shouldWrap = currentX > 0 && currentX + spacing + size.width > maxWidth
+
+      if shouldWrap {
+        totalHeight += currentRowHeight + lineSpacing
+        maxRowWidth = max(maxRowWidth, currentX)
+        currentX = 0
+        currentRowHeight = 0
+      }
+
+      if currentX > 0 {
+        currentX += spacing
+      }
+
+      currentX += size.width
+      currentRowHeight = max(currentRowHeight, size.height)
+    }
+
+    maxRowWidth = max(maxRowWidth, currentX)
+    totalHeight += currentRowHeight
+
+    return CGSize(width: maxRowWidth, height: totalHeight)
+  }
+
+  func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+    var currentX = bounds.minX
+    var currentY = bounds.minY
+    var currentRowHeight: CGFloat = 0
+
+    for subview in subviews {
+      let size = subview.sizeThatFits(.unspecified)
+      let shouldWrap = currentX > bounds.minX && currentX + spacing + size.width > bounds.maxX
+
+      if shouldWrap {
+        currentX = bounds.minX
+        currentY += currentRowHeight + lineSpacing
+        currentRowHeight = 0
+      }
+
+      if currentX > bounds.minX {
+        currentX += spacing
+      }
+
+      subview.place(
+        at: CGPoint(x: currentX, y: currentY),
+        anchor: .topLeading,
+        proposal: ProposedViewSize(width: size.width, height: size.height)
+      )
+
+      currentX += size.width
+      currentRowHeight = max(currentRowHeight, size.height)
     }
   }
 }

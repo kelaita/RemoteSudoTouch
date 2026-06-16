@@ -27,6 +27,9 @@ final class InstallerViewModel: ObservableObject {
 
   var supportDir: URL { service.supportDir }
   var launchAgentsDir: URL { service.launchAgentsDir }
+  var installButtonTitle: String {
+    service.hasInstalledArtifacts(for: configuration) ? "Apply Changes" : "Install"
+  }
 
   var selectedHostIndex: Int? {
     guard let selectedHostID else {
