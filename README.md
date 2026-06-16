@@ -53,6 +53,7 @@ You can install that `.pkg` directly and skip the Xcode build step.
 ## Packaging
 
 - `scripts/build-pkg.sh` builds a Release archive, creates a component package, and wraps it in a final installer package.
+- `scripts/release-pkg.sh` builds a signed installer package, submits it for notarization, staples the ticket, and validates the final artifact.
 - By default it produces an unsigned installer in `dist/RemoteSudoTouch-<version>.pkg`.
 - The repo may also already include a prebuilt installer in `dist/`, which can be used directly without rebuilding the package first.
 - To sign the installer package, set one or both of these environment variables before running it:
@@ -68,6 +69,15 @@ You can install that `.pkg` directly and skip the Xcode build step.
 APP_SIGNING_IDENTITY="Developer ID Application: Pomace Development Group, LLC" \
 PKG_SIGNING_IDENTITY="Developer ID Installer: Pomace Development Group, LLC" \
 ./scripts/build-pkg.sh
+```
+
+To build, notarize, staple, and validate in one step:
+
+```bash
+APP_SIGNING_IDENTITY="Developer ID Application: Pomace Development Group, LLC (BAHC65VR5A)" \
+PKG_SIGNING_IDENTITY="Developer ID Installer: Pomace Development Group, LLC (BAHC65VR5A)" \
+NOTARY_KEYCHAIN_PROFILE="RemoteSudoTouchNotary" \
+./scripts/release-pkg.sh
 ```
 
 ## First run checklist
