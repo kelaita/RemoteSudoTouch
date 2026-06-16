@@ -219,6 +219,12 @@ struct InstallerView: View {
                   Text("\(host.remoteUser.isEmpty ? "<ssh user>" : host.remoteUser)@\(host.remoteHost.isEmpty ? "<hostname or alias>" : host.remoteHost):\(host.remoteListenPort)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                  if !host.trimmedSSHKeyPathOverride.isEmpty {
+                    Text("Override key: \(host.trimmedSSHKeyPathOverride)")
+                      .font(.caption2)
+                      .foregroundStyle(.secondary)
+                      .lineLimit(1)
+                  }
                 }
                 .padding(.vertical, 2)
                 .tag(host.id)
@@ -292,6 +298,32 @@ struct InstallerView: View {
                 TextField("9876", text: $viewModel.hosts[selectedHostIndex].remoteListenPort)
                   .textFieldStyle(.roundedBorder)
                   .frame(width: 120)
+              }
+
+              GridRow(alignment: .top) {
+                fieldLabel("SSH key override")
+                VStack(alignment: .leading, spacing: 8) {
+                  HStack(spacing: 10) {
+                    TextField("Leave blank to use the default key", text: $viewModel.hosts[selectedHostIndex].sshKeyPathOverride)
+                      .textFieldStyle(.roundedBorder)
+
+                    Button("Browse…") {
+                      viewModel.pickSelectedHostSSHKeyOverride()
+                    }
+                    .buttonStyle(.bordered)
+
+                    Button("Clear") {
+                      viewModel.clearSelectedHostSSHKeyOverride()
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(viewModel.hosts[selectedHostIndex].trimmedSSHKeyPathOverride.isEmpty)
+                  }
+
+                  Text("Use a different private key for this server only. Leave blank to fall back to the default SSH private key above.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                }
               }
             }
 

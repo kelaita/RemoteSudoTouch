@@ -12,6 +12,29 @@ struct RemoteSudoTouchApp: App {
         .background(WindowConfigurator())
     }
     .windowResizability(.contentMinSize)
+    .commands {
+      AppCommands()
+    }
+
+    Window("About RemoteSudoTouch", id: "about") {
+      AboutView()
+    }
+    .windowResizability(.contentSize)
+    .windowStyle(.hiddenTitleBar)
+  }
+}
+
+struct AppCommands: Commands {
+  @Environment(\.openWindow) private var openWindow
+
+  var body: some Commands {
+    CommandGroup(replacing: .appInfo) {
+      Button("About RemoteSudoTouch") {
+        openWindow(id: "about")
+      }
+    }
+
+    CommandGroup(replacing: .appSettings) {}
   }
 }
 

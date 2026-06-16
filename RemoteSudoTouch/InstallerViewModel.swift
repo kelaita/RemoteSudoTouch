@@ -40,16 +40,41 @@ final class InstallerViewModel: ObservableObject {
   }
 
   func pickSSHKey() {
+    if let path = pickFilePath(prompt: "Choose") {
+      sshKeyPath = path
+    }
+  }
+
+  func pickSelectedHostSSHKeyOverride() {
+    guard let selectedHostIndex,
+          let path = pickFilePath(prompt: "Choose Override Key")
+    else {
+      return
+    }
+
+    hosts[selectedHostIndex].sshKeyPathOverride = path
+  }
+
+  func clearSelectedHostSSHKeyOverride() {
+    guard let selectedHostIndex else {
+      return
+    }
+
+    hosts[selectedHostIndex].sshKeyPathOverride = ""
+  }
+
+  private func pickFilePath(prompt: String) -> String? {
     let panel = NSOpenPanel()
     panel.canChooseFiles = true
     panel.canChooseDirectories = false
     panel.allowsMultipleSelection = false
     panel.showsHiddenFiles = true
-    panel.prompt = "Choose"
+    panel.prompt = prompt
 
     if panel.runModal() == .OK, let url = panel.url {
-      sshKeyPath = url.path
+      return url.path
     }
+    return nil
   }
 
   func addHost() {

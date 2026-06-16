@@ -5,6 +5,7 @@ struct TunnelHost: Codable, Equatable, Identifiable {
   var name: String
   var remoteUser: String
   var remoteHost: String
+  var sshKeyPathOverride: String
   var remoteListenPort: String
 
   init(
@@ -12,12 +13,14 @@ struct TunnelHost: Codable, Equatable, Identifiable {
     name: String = "",
     remoteUser: String = "",
     remoteHost: String = "",
+    sshKeyPathOverride: String = "",
     remoteListenPort: String = "9876"
   ) {
     self.id = id
     self.name = name
     self.remoteUser = remoteUser
     self.remoteHost = remoteHost
+    self.sshKeyPathOverride = sshKeyPathOverride
     self.remoteListenPort = remoteListenPort
   }
 
@@ -31,6 +34,10 @@ struct TunnelHost: Codable, Equatable, Identifiable {
 
   var trimmedRemoteHost: String {
     remoteHost.trimmingCharacters(in: .whitespacesAndNewlines)
+  }
+
+  var trimmedSSHKeyPathOverride: String {
+    sshKeyPathOverride.trimmingCharacters(in: .whitespacesAndNewlines)
   }
 
   var displayName: String {
@@ -74,6 +81,25 @@ struct TunnelHost: Codable, Equatable, Identifiable {
   private var shortID: String {
     String(id.prefix(8)).lowercased()
   }
+
+  private enum CodingKeys: String, CodingKey {
+    case id
+    case name
+    case remoteUser
+    case remoteHost
+    case sshKeyPathOverride
+    case remoteListenPort
+  }
+
+  init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    id = try container.decodeIfPresent(String.self, forKey: .id) ?? UUID().uuidString
+    name = try container.decodeIfPresent(String.self, forKey: .name) ?? ""
+    remoteUser = try container.decodeIfPresent(String.self, forKey: .remoteUser) ?? ""
+    remoteHost = try container.decodeIfPresent(String.self, forKey: .remoteHost) ?? ""
+    sshKeyPathOverride = try container.decodeIfPresent(String.self, forKey: .sshKeyPathOverride) ?? ""
+    remoteListenPort = try container.decodeIfPresent(String.self, forKey: .remoteListenPort) ?? "9876"
+  }
 }
 
 struct InstallerConfiguration {
@@ -85,6 +111,14 @@ struct InstallerConfiguration {
 
   var expandedSSHKeyPath: String {
     (sshKeyPath as NSString).expandingTildeInPath
+  }
+
+  func expandedSSHKeyPath(for host: TunnelHost) -> String {
+    let overridePath = host.trimmedSSHKeyPathOverride
+    if !overridePath.isEmpty {
+      return (overridePath as NSString).expandingTildeInPath
+    }
+    return expandedSSHKeyPath
   }
 
   var agentPortValue: Int {
@@ -260,10 +294,11 @@ final class InstallerService {
     var failedHosts: [String] = []
 
     for host in configuration.hosts {
+      let sshKeyPath = configuration.expandedSSHKeyPath(for: host)
       do {
         let output = try runCapture([
           "/usr/bin/ssh",
-          "-i", configuration.expandedSSHKeyPath,
+          "-i", sshKeyPath,
           "-o", "BatchMode=yes",
           "-o", "ConnectTimeout=5",
           "-o", "StrictHostKeyChecking=accept-new",
@@ -429,10 +464,6 @@ final class InstallerService {
       throw InstallerError("Local agent port must be a valid TCP port.")
     }
 
-    if !fileManager.fileExists(atPath: configuration.expandedSSHKeyPath) {
-      throw InstallerError("SSH private key not found at \(configuration.expandedSSHKeyPath)")
-    }
-
     if configuration.hosts.isEmpty {
       throw InstallerError("Add at least one remote server.")
     }
@@ -440,6 +471,11 @@ final class InstallerService {
     var seenHosts = Set<String>()
 
     for host in configuration.hosts {
+      let sshKeyPath = configuration.expandedSSHKeyPath(for: host)
+      if !fileManager.fileExists(atPath: sshKeyPath) {
+        throw InstallerError("SSH private key not found for \(host.displayName) at \(sshKeyPath)")
+      }
+
       if host.trimmedRemoteUser.isEmpty {
         throw InstallerError("Each server needs a remote Ubuntu username.")
       }
@@ -632,11 +668,12 @@ final class InstallerService {
 
   private func writeTunnelRunnerScripts(configuration: InstallerConfiguration, log: (String) -> Void) throws {
     for host in configuration.hosts {
+      let sshKeyPath = configuration.expandedSSHKeyPath(for: host)
       let script = """
       #!/bin/zsh
       set -u
 
-      SSH_KEY="\(configuration.expandedSSHKeyPath)"
+      SSH_KEY="\(sshKeyPath)"
       REMOTE_TARGET="\(host.trimmedRemoteUser)@\(host.trimmedRemoteHost)"
       REMOTE_PORT="\(host.remoteListenPort)"
       LOCAL_PORT="\(configuration.localAgentPort)"
