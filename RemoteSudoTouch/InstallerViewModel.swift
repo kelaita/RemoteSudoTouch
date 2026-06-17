@@ -16,6 +16,7 @@ final class InstallerViewModel: ObservableObject {
   @Published var showSuccess = false
 
   private let service = InstallerService()
+  private var refreshTask: Task<Void, Never>?
 
   init() {
     loadSavedConfiguration()
@@ -23,6 +24,11 @@ final class InstallerViewModel: ObservableObject {
       selectedHostID = hosts.first?.id
     }
     refreshServiceStatus()
+    startAutoRefresh()
+  }
+
+  deinit {
+    refreshTask?.cancel()
   }
 
   var supportDir: URL { service.supportDir }
@@ -188,6 +194,19 @@ final class InstallerViewModel: ObservableObject {
 
   func refreshServiceStatus() {
     serviceStatus = service.currentServiceStatus(configuration: configuration)
+  }
+
+  private func startAutoRefresh() {
+    refreshTask?.cancel()
+    refreshTask = Task { [weak self] in
+      while !Task.isCancelled {
+        try? await Task.sleep(nanoseconds: 5_000_000_000)
+        guard let self else {
+          return
+        }
+        self.refreshServiceStatus()
+      }
+    }
   }
 
   private func appendStatus(_ line: String) {

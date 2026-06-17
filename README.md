@@ -31,17 +31,20 @@ You can install that `.pkg` directly and skip the Xcode build step.
 
 - `~/Library/Application Support/RemoteSudoTouch/RemoteSudoTouchAgent`
 - `~/Library/Application Support/RemoteSudoTouch/RemoteSudoTouch-agent.sh`
-- `~/Library/Application Support/RemoteSudoTouch/RemoteSudoTouch-ssh-tunnel.sh`
+- `~/Library/Application Support/RemoteSudoTouch/RemoteSudoTouch-ssh-tunnel-<host>.sh`
 - `~/Library/Application Support/RemoteSudoTouch/installer-config.json`
 - `~/Library/LaunchAgents/net.pomace.remotesudotouch.agent.plist`
-- `~/Library/LaunchAgents/net.pomace.remotesudotouch.tunnel.plist`
+- `~/Library/LaunchAgents/net.pomace.remotesudotouch.tunnel.<host>.plist`
 
 ## Service model
 
-- Linux runs `pam_exec` and connects to `localhost:9876`.
+- On Linux, the PAM helper connects to `/run/remote-sudo-touch.sock`.
+- A local Linux socket-activated bridge forwards that request to `127.0.0.1:9876`.
 - The Linux machine must establish a path back through the reverse SSH tunnel to the Mac.
 - The macOS tunnel LaunchAgent runs `ssh -NT -R 127.0.0.1:<remotePort>:127.0.0.1:<localPort> user@host`.
 - The macOS agent LaunchAgent runs the bundled `RemoteSudoTouchAgent --port <localPort>`.
+- Each configured server gets its own tunnel script and LaunchAgent.
+- Tunnel scripts perform periodic end-to-end health checks and let `launchd` restart the tunnel if it goes stale.
 
 ## Xcode notes
 
@@ -85,7 +88,7 @@ NOTARY_KEYCHAIN_PROFILE="RemoteSudoTouchNotary" \
 1. Build the project once so the embedded `RemoteSudoTouchAgent` binary exists in the app bundle resources.
 2. Launch the app and fill in the Linux username, hostname, SSH key path, and ports.
 3. Run `Validate SSH` before applying configuration if the host has not been contacted from this Mac yet.
-4. Click `Install` to copy the agent, write LaunchAgents, and reload services.
+4. Click `Install` the first time, then `Apply Changes` after later edits to rewrite support files and reload services.
 
 ## Limitations
 

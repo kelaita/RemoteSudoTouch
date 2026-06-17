@@ -409,6 +409,10 @@ struct InstallerView: View {
         )
 
         FlowLayout(spacing: 10, lineSpacing: 10) {
+          actionButton("Refresh Status") {
+            viewModel.refreshServiceStatus()
+          }
+
           actionButton(viewModel.installButtonTitle, tint: accentGreen, prominent: true) {
             Task { await viewModel.install() }
           }

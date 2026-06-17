@@ -323,11 +323,18 @@ final class InstallerService {
     try validate(configuration: configuration)
     try ensureInstalledArtifacts(configuration: configuration)
 
+    var failures: [String] = []
+
     if try isServiceLoaded(label: agentLabel) {
       log("\(agentLabel) is already running.")
     } else {
-      try bootstrap(plistURL: agentPlistURL)
-      log("Started \(agentLabel).")
+      do {
+        try bootstrap(plistURL: agentPlistURL)
+        log("Started \(agentLabel).")
+      } catch {
+        failures.append(error.localizedDescription)
+        log("WARNING: \(error.localizedDescription)")
+      }
     }
 
     for host in configuration.hosts {
@@ -337,9 +344,19 @@ final class InstallerService {
       if try isServiceLoaded(label: label) {
         log("\(label) is already running.")
       } else {
-        try bootstrap(plistURL: plistURL)
-        log("Started \(label).")
+        do {
+          try bootstrap(plistURL: plistURL)
+          log("Started \(label).")
+        } catch {
+          failures.append(error.localizedDescription)
+          log("WARNING: \(error.localizedDescription)")
+        }
       }
+    }
+
+    if !failures.isEmpty {
+      let suffix = failures.count == 1 ? "" : "s"
+      throw InstallerError("Some services could not be started cleanly (\(failures.count) issue\(suffix)). Review the status panel for details.")
     }
   }
 
@@ -363,11 +380,30 @@ final class InstallerService {
       try bootout(label: label)
     }
 
-    try bootstrap(plistURL: agentPlistURL)
-    for host in configuration.hosts {
-      try bootstrap(plistURL: tunnelPlistURL(for: host))
+    var failures: [String] = []
+
+    do {
+      try bootstrap(plistURL: agentPlistURL)
+    } catch {
+      failures.append(error.localizedDescription)
+      log("WARNING: \(error.localizedDescription)")
     }
+
+    for host in configuration.hosts {
+      do {
+        try bootstrap(plistURL: tunnelPlistURL(for: host))
+      } catch {
+        failures.append(error.localizedDescription)
+        log("WARNING: \(error.localizedDescription)")
+      }
+    }
+
     log("Reloaded LaunchAgents.")
+
+    if !failures.isEmpty {
+      let suffix = failures.count == 1 ? "" : "s"
+      throw InstallerError("LaunchAgents were reloaded, but \(failures.count) service\(suffix) did not start cleanly. Review the status panel for details.")
+    }
   }
 
   func loadSavedConfiguration() -> StoredConfiguration? {
@@ -678,15 +714,28 @@ final class InstallerService {
       REMOTE_PORT="\(host.remoteListenPort)"
       LOCAL_PORT="\(configuration.localAgentPort)"
       SSH_PID=""
+      SSH_EXIT_CODE=0
+      HEALTH_INTERVAL=15
+      MAX_FAILURES=2
 
       log() {
         print -r -- "$(date -u '+%Y-%m-%dT%H:%M:%SZ') $*"
       }
 
+      wait_for_ssh() {
+        local pid="$1"
+        if [[ -z "$pid" ]]; then
+          return 0
+        fi
+
+        wait "$pid" 2>/dev/null
+        return $?
+      }
+
       cleanup() {
         if [[ -n "${SSH_PID:-}" ]] && kill -0 "$SSH_PID" 2>/dev/null; then
           kill "$SSH_PID" 2>/dev/null || true
-          wait "$SSH_PID" 2>/dev/null || true
+          wait_for_ssh "$SSH_PID" || true
         fi
       }
 
@@ -730,30 +779,34 @@ final class InstallerService {
 
       sleep 3
       if ! kill -0 "$SSH_PID" 2>/dev/null; then
-        wait "$SSH_PID"
+        wait_for_ssh "$SSH_PID"
         exit $?
       fi
 
       failures=0
       while kill -0 "$SSH_PID" 2>/dev/null; do
         if health_check; then
+          if (( failures > 0 )); then
+            log "reverse tunnel health check recovered"
+          fi
           failures=0
         else
           failures=$((failures + 1))
-          log "reverse tunnel health check failed ($failures/2)"
+          log "reverse tunnel health check failed ($failures/$MAX_FAILURES)"
         fi
 
-        if (( failures >= 2 )); then
+        if (( failures >= MAX_FAILURES )); then
           log "reverse tunnel appears stale; exiting so launchd can restart it"
           kill "$SSH_PID" 2>/dev/null || true
-          wait "$SSH_PID" 2>/dev/null || true
+          wait_for_ssh "$SSH_PID" || true
           exit 1
         fi
 
-        sleep 30
+        sleep "$HEALTH_INTERVAL"
       done
 
-      wait "$SSH_PID"
+      log "ssh process exited; handing restart back to launchd"
+      wait_for_ssh "$SSH_PID"
       """
 
       let url = tunnelRunnerScriptURL(for: host)
@@ -931,12 +984,35 @@ final class InstallerService {
   }
 
   private func bootstrap(plistURL: URL) throws {
-    try run([
+    let label = plistURL.deletingPathExtension().lastPathComponent
+    let command = [
       "/bin/launchctl",
       "bootstrap",
       "gui/\(getuid())",
       plistURL.path
-    ], ignoringExitCodes: [37])
+    ]
+
+    for attempt in 1...3 {
+      do {
+        try run(command, ignoringExitCodes: [37])
+        return
+      } catch {
+        let message = error.localizedDescription
+        let isRetryable = message.contains("Bootstrap failed: 5")
+          || message.localizedCaseInsensitiveContains("input/output error")
+
+        if isRetryable, ((try? isServiceLoaded(label: label)) == true) {
+          return
+        }
+
+        if !isRetryable || attempt == 3 {
+          throw InstallerError("Failed to load \(label): \(message)")
+        }
+
+        try? bootout(label: label)
+        Thread.sleep(forTimeInterval: 0.35 * Double(attempt))
+      }
+    }
   }
 
   private func bootout(label: String) throws {
