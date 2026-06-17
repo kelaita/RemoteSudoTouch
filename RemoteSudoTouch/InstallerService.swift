@@ -925,7 +925,7 @@ final class InstallerService {
         return "ssh authentication failed"
       }
 
-      if stdoutTail.contains("reverse tunnel appears stale") || stdoutTail.contains("reverse tunnel health check failed") {
+      if latestTunnelHealthLooksFailed(stdoutTail) {
         return "tunnel health checks are failing"
       }
 
@@ -940,7 +940,7 @@ final class InstallerService {
       return "service is not running"
     }
 
-    if stdoutTail.contains("reverse tunnel appears stale") {
+    if latestTunnelHealthLooksFailed(stdoutTail) {
       return "tunnel health checks are failing"
     }
 
@@ -949,6 +949,29 @@ final class InstallerService {
     }
 
     return nil
+  }
+
+  private func latestTunnelHealthLooksFailed(_ stdoutTail: String) -> Bool {
+    let lines = stdoutTail
+      .split(whereSeparator: \.isNewline)
+      .map(String.init)
+
+    for line in lines.reversed() {
+      if line.contains("reverse tunnel health check recovered")
+        || line.contains("starting reverse tunnel")
+        || line.contains("ssh process exited; handing restart back to launchd")
+      {
+        return false
+      }
+
+      if line.contains("reverse tunnel appears stale")
+        || line.contains("reverse tunnel health check failed")
+      {
+        return true
+      }
+    }
+
+    return false
   }
 
   private func recentLogTail(at url: URL, maxLines: Int = 20) -> String {
