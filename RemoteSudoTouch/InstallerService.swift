@@ -277,14 +277,28 @@ final class InstallerService {
   func install(configuration: InstallerConfiguration, log: (String) -> Void) throws {
     try validate(configuration: configuration)
     try ensureDirectories(log: log)
-    try removeLegacyArtifacts(log: log)
-    try removeCurrentTunnelArtifacts(keeping: configuration.hosts, log: log)
-    try installBundledAgent(log: log)
-    try writeConfig(configuration: configuration, log: log)
-    try writeAgentRunnerScript(configuration: configuration, log: log)
-    try writeTunnelRunnerScripts(configuration: configuration, log: log)
-    try writeLaunchAgents(configuration: configuration, log: log)
-    try reloadServices(configuration: configuration, log: log)
+    let removedLegacyArtifacts = try removeLegacyArtifacts(log: log)
+    let removedCurrentTunnelArtifacts = try removeCurrentTunnelArtifacts(keeping: configuration.hosts, log: log)
+    let installedBundledAgent = try installBundledAgent(log: log)
+    let wroteConfig = try writeConfig(configuration: configuration, log: log)
+    let wroteAgentScript = try writeAgentRunnerScript(configuration: configuration, log: log)
+    let changedTunnelScriptLabels = try writeTunnelRunnerScripts(configuration: configuration, log: log)
+    let changedLaunchAgentLabels = try writeLaunchAgents(configuration: configuration, log: log)
+
+    let shouldReloadAllServices = removedLegacyArtifacts || removedCurrentTunnelArtifacts
+    let shouldReloadDueToCoreChange = installedBundledAgent || wroteConfig || wroteAgentScript
+    let labelsToReload = Set(changedLaunchAgentLabels)
+      .union(changedTunnelScriptLabels)
+      .union(shouldReloadDueToCoreChange ? [agentLabel] + configuration.hosts.map(tunnelLabel(for:)) : [])
+
+    if shouldReloadAllServices {
+      try reloadServices(configuration: configuration, log: log)
+    } else if !labelsToReload.isEmpty {
+      try reloadServices(configuration: configuration, labels: labelsToReload, log: log)
+    } else {
+      log("No configuration changes detected. Left healthy services running.")
+    }
+
     log("Configuration applied.")
   }
 
@@ -371,25 +385,36 @@ final class InstallerService {
     log("Stopped \(agentLabel).")
   }
 
-  func reloadServices(configuration: InstallerConfiguration, log: (String) -> Void) throws {
-    for label in legacyLabels {
+  func reloadServices(
+    configuration: InstallerConfiguration,
+    labels: Set<String>? = nil,
+    log: (String) -> Void
+  ) throws {
+    let labelsToReload = labels ?? Set(currentKnownLabels(configuration: configuration))
+
+    for label in legacyLabels where labels == nil {
       try bootout(label: label)
     }
 
-    for label in currentKnownLabels(configuration: configuration) {
+    for label in currentKnownLabels(configuration: configuration) where labelsToReload.contains(label) {
       try bootout(label: label)
     }
 
     var failures: [String] = []
 
-    do {
-      try bootstrap(plistURL: agentPlistURL)
-    } catch {
-      failures.append(error.localizedDescription)
-      log("WARNING: \(error.localizedDescription)")
+    if labelsToReload.contains(agentLabel) {
+      do {
+        try bootstrap(plistURL: agentPlistURL)
+      } catch {
+        failures.append(error.localizedDescription)
+        log("WARNING: \(error.localizedDescription)")
+      }
     }
 
     for host in configuration.hosts {
+      guard labelsToReload.contains(tunnelLabel(for: host)) else {
+        continue
+      }
       do {
         try bootstrap(plistURL: tunnelPlistURL(for: host))
       } catch {
@@ -398,7 +423,7 @@ final class InstallerService {
       }
     }
 
-    log("Reloaded LaunchAgents.")
+    log(labels == nil ? "Reloaded LaunchAgents." : "Reloaded updated LaunchAgents.")
 
     if !failures.isEmpty {
       let suffix = failures.count == 1 ? "" : "s"
@@ -485,7 +510,7 @@ final class InstallerService {
       }
     }
 
-    try removeCurrentTunnelArtifacts(log: log)
+    _ = try removeCurrentTunnelArtifacts(log: log)
 
     for url in cleanupFileURLs + [agentBinaryURL, configFileURL] {
       if fileManager.fileExists(atPath: url.path) {
@@ -539,7 +564,9 @@ final class InstallerService {
     log("Ensured Application Support and LaunchAgents directories.")
   }
 
-  private func removeLegacyArtifacts(log: (String) -> Void) throws {
+  private func removeLegacyArtifacts(log: (String) -> Void) throws -> Bool {
+    var changed = false
+
     for label in legacyLabels {
       try bootout(label: label)
     }
@@ -547,6 +574,7 @@ final class InstallerService {
     for url in legacyPlistURLs {
       if fileManager.fileExists(atPath: url.path) {
         try fileManager.removeItem(at: url)
+        changed = true
         log("Removed legacy LaunchAgent \(url.lastPathComponent).")
       }
     }
@@ -564,6 +592,7 @@ final class InstallerService {
     for url in legacyFiles {
       if fileManager.fileExists(atPath: url.path) {
         try fileManager.removeItem(at: url)
+        changed = true
         log("Removed legacy support file \(url.lastPathComponent).")
       }
     }
@@ -571,11 +600,15 @@ final class InstallerService {
     if fileManager.fileExists(atPath: legacySupportDir.path),
        (try? fileManager.contentsOfDirectory(atPath: legacySupportDir.path).isEmpty) == true {
       try fileManager.removeItem(at: legacySupportDir)
+      changed = true
       log("Removed legacy support folder \(legacySupportDir.lastPathComponent).")
     }
+
+    return changed
   }
 
-  private func removeCurrentTunnelArtifacts(keeping hosts: [TunnelHost] = [], log: (String) -> Void) throws {
+  private func removeCurrentTunnelArtifacts(keeping hosts: [TunnelHost] = [], log: (String) -> Void) throws -> Bool {
+    var changed = false
     let labelsToKeep = Set(hosts.map(tunnelLabel(for:)))
     let scriptsToKeep = Set(hosts.map { tunnelRunnerScriptURL(for: $0).lastPathComponent })
     let logNamesToKeep = Set(hosts.flatMap { host in
@@ -597,6 +630,7 @@ final class InstallerService {
       }
       try bootout(label: label)
       try fileManager.removeItem(at: url)
+      changed = true
       log("Removed stale tunnel LaunchAgent \(url.lastPathComponent).")
     }
 
@@ -610,6 +644,7 @@ final class InstallerService {
         continue
       }
       try fileManager.removeItem(at: url)
+      changed = true
       log("Removed stale tunnel script \(url.lastPathComponent).")
     }
 
@@ -623,8 +658,11 @@ final class InstallerService {
         continue
       }
       try fileManager.removeItem(at: url)
+      changed = true
       log("Removed stale tunnel log \(url.lastPathComponent).")
     }
+
+    return changed
   }
 
   private func matchingURLs(in directory: URL, prefix: String, suffix: String) throws -> [URL] {
@@ -663,9 +701,16 @@ final class InstallerService {
     }
   }
 
-  private func installBundledAgent(log: (String) -> Void) throws {
+  private func installBundledAgent(log: (String) -> Void) throws -> Bool {
     guard let bundledURL = Bundle.main.url(forResource: bundleBinaryName, withExtension: nil) else {
       throw InstallerError("Bundled \(bundleBinaryName) binary is missing from app resources.")
+    }
+
+    let bundledData = try Data(contentsOf: bundledURL)
+    let existingData = try? Data(contentsOf: agentBinaryURL)
+
+    if existingData == bundledData {
+      return false
     }
 
     if fileManager.fileExists(atPath: agentBinaryURL.path) {
@@ -675,9 +720,10 @@ final class InstallerService {
     try fileManager.copyItem(at: bundledURL, to: agentBinaryURL)
     try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: agentBinaryURL.path)
     log("Installed bundled \(bundleBinaryName).")
+    return true
   }
 
-  private func writeConfig(configuration: InstallerConfiguration, log: (String) -> Void) throws {
+  private func writeConfig(configuration: InstallerConfiguration, log: (String) -> Void) throws -> Bool {
     let payload = StoredConfiguration(
       sshKeyPath: configuration.expandedSSHKeyPath,
       localAgentPort: configuration.agentPortValue,
@@ -687,22 +733,30 @@ final class InstallerService {
     )
 
     let data = try JSONEncoder.pretty.encode(payload)
-    try data.write(to: configFileURL, options: .atomic)
+    guard try writeDataIfChanged(data, to: configFileURL) else {
+      return false
+    }
     log("Wrote configuration snapshot.")
+    return true
   }
 
-  private func writeAgentRunnerScript(configuration: InstallerConfiguration, log: (String) -> Void) throws {
+  private func writeAgentRunnerScript(configuration: InstallerConfiguration, log: (String) -> Void) throws -> Bool {
     let script = """
     #!/bin/zsh
     exec "\(agentBinaryURL.path)" --port \(configuration.agentPortValue)
     """
 
-    try script.write(to: agentRunnerScriptURL, atomically: true, encoding: .utf8)
+    guard try writeTextIfChanged(script, to: agentRunnerScriptURL) else {
+      return false
+    }
     try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: agentRunnerScriptURL.path)
     log("Wrote \(agentRunnerScriptURL.lastPathComponent).")
+    return true
   }
 
-  private func writeTunnelRunnerScripts(configuration: InstallerConfiguration, log: (String) -> Void) throws {
+  private func writeTunnelRunnerScripts(configuration: InstallerConfiguration, log: (String) -> Void) throws -> Set<String> {
+    var changedLabels = Set<String>()
+
     for host in configuration.hosts {
       let sshKeyPath = configuration.expandedSSHKeyPath(for: host)
       let script = """
@@ -810,13 +864,19 @@ final class InstallerService {
       """
 
       let url = tunnelRunnerScriptURL(for: host)
-      try script.write(to: url, atomically: true, encoding: .utf8)
+      guard try writeTextIfChanged(script, to: url) else {
+        continue
+      }
       try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
+      changedLabels.insert(tunnelLabel(for: host))
       log("Wrote \(url.lastPathComponent).")
     }
+
+    return changedLabels
   }
 
-  private func writeLaunchAgents(configuration: InstallerConfiguration, log: (String) -> Void) throws {
+  private func writeLaunchAgents(configuration: InstallerConfiguration, log: (String) -> Void) throws -> Set<String> {
+    var changedLabels = Set<String>()
     let agentPlist: [String: Any] = [
       "Label": agentLabel,
       "ProgramArguments": [agentRunnerScriptURL.path],
@@ -827,7 +887,9 @@ final class InstallerService {
       "StandardErrorPath": logsDir.appendingPathComponent("RemoteSudoTouch-agent.err.log").path
     ]
 
-    try writePlist(agentPlist, to: agentPlistURL)
+    if try writePlistIfChanged(agentPlist, to: agentPlistURL) {
+      changedLabels.insert(agentLabel)
+    }
 
     for host in configuration.hosts {
       let slug = host.fileSlug
@@ -841,15 +903,38 @@ final class InstallerService {
         "StandardErrorPath": logsDir.appendingPathComponent("\(appScriptPrefix)-ssh-tunnel-\(slug).err.log").path
       ]
 
-      try writePlist(tunnelPlist, to: tunnelPlistURL(for: host))
+      if try writePlistIfChanged(tunnelPlist, to: tunnelPlistURL(for: host)) {
+        changedLabels.insert(tunnelLabel(for: host))
+      }
     }
 
-    log("Wrote LaunchAgents.")
+    if !changedLabels.isEmpty {
+      log("Wrote LaunchAgents.")
+    }
+    return changedLabels
   }
 
   private func writePlist(_ object: [String: Any], to url: URL) throws {
     let data = try PropertyListSerialization.data(fromPropertyList: object, format: .xml, options: 0)
     try data.write(to: url, options: .atomic)
+  }
+
+  private func writePlistIfChanged(_ object: [String: Any], to url: URL) throws -> Bool {
+    let data = try PropertyListSerialization.data(fromPropertyList: object, format: .xml, options: 0)
+    return try writeDataIfChanged(data, to: url)
+  }
+
+  private func writeTextIfChanged(_ string: String, to url: URL) throws -> Bool {
+    try writeDataIfChanged(Data(string.utf8), to: url)
+  }
+
+  private func writeDataIfChanged(_ data: Data, to url: URL) throws -> Bool {
+    if let existing = try? Data(contentsOf: url), existing == data {
+      return false
+    }
+
+    try data.write(to: url, options: .atomic)
+    return true
   }
 
   private func currentKnownLabels(configuration: InstallerConfiguration) -> [String] {
