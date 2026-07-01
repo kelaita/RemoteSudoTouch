@@ -277,6 +277,7 @@ final class InstallerService {
   func install(configuration: InstallerConfiguration, log: (String) -> Void) throws {
     try validate(configuration: configuration)
     try ensureDirectories(log: log)
+    let preInstallStatus = currentServiceStatus(configuration: configuration)
     let removedLegacyArtifacts = try removeLegacyArtifacts(log: log)
     let removedCurrentTunnelArtifacts = try removeCurrentTunnelArtifacts(keeping: configuration.hosts, log: log)
     let installedBundledAgent = try installBundledAgent(log: log)
@@ -285,18 +286,35 @@ final class InstallerService {
     let changedTunnelScriptLabels = try writeTunnelRunnerScripts(configuration: configuration, log: log)
     let changedLaunchAgentLabels = try writeLaunchAgents(configuration: configuration, log: log)
 
-    let shouldReloadAllServices = removedLegacyArtifacts || removedCurrentTunnelArtifacts
+    let shouldForceRecoveryReload = !preInstallStatus.agentRunning || preInstallStatus.healthyTunnels < preInstallStatus.totalTunnels
+    let shouldReloadAllServices = removedLegacyArtifacts || removedCurrentTunnelArtifacts || shouldForceRecoveryReload
     let shouldReloadDueToCoreChange = installedBundledAgent || wroteConfig || wroteAgentScript
     let labelsToReload = Set(changedLaunchAgentLabels)
       .union(changedTunnelScriptLabels)
       .union(shouldReloadDueToCoreChange ? [agentLabel] + configuration.hosts.map(tunnelLabel(for:)) : [])
 
     if shouldReloadAllServices {
+      if shouldForceRecoveryReload && !(removedLegacyArtifacts || removedCurrentTunnelArtifacts) {
+        log("Detected unhealthy services before apply. Running full recovery reload.")
+      }
       try reloadServices(configuration: configuration, log: log)
     } else if !labelsToReload.isEmpty {
       try reloadServices(configuration: configuration, labels: labelsToReload, log: log)
+
+      let postReloadStatus = waitForServiceStabilization(configuration: configuration)
+      if !postReloadStatus.agentRunning || postReloadStatus.healthyTunnels < postReloadStatus.totalTunnels {
+        log("Targeted reload left unhealthy services behind. Escalating to full recovery reload.")
+        try reloadServices(configuration: configuration, log: log)
+      }
     } else {
       log("No configuration changes detected. Left healthy services running.")
+    }
+
+    let finalStatus = waitForServiceStabilization(configuration: configuration)
+    if !finalStatus.agentRunning || finalStatus.healthyTunnels < finalStatus.totalTunnels {
+      log("Services still look unhealthy after apply. Running one final recovery reload.")
+      try reloadServices(configuration: configuration, log: log)
+      _ = waitForServiceStabilization(configuration: configuration)
     }
 
     log("Configuration applied.")
@@ -771,6 +789,7 @@ final class InstallerService {
       SSH_EXIT_CODE=0
       HEALTH_INTERVAL=15
       MAX_FAILURES=2
+      RETRY_DELAY=5
 
       log() {
         print -r -- "$(date -u '+%Y-%m-%dT%H:%M:%SZ') $*"
@@ -784,6 +803,83 @@ final class InstallerService {
 
         wait "$pid" 2>/dev/null
         return $?
+      }
+
+      log_ssh_error_output() {
+        local error_file="$1"
+        [[ -f "$error_file" ]] || return 0
+
+        while IFS= read -r line; do
+          [[ -n "$line" ]] && log "ssh stderr: $line"
+        done < "$error_file"
+      }
+
+      classify_startup_failure() {
+        local error_file="$1"
+        [[ -f "$error_file" ]] || return 1
+
+        local error_text
+        error_text="$(<"$error_file")"
+
+        if [[ "$error_text" == *"remote port forwarding failed for listen port"* ]]; then
+          log "reverse tunnel startup failed: remote port $REMOTE_PORT is still occupied on the server"
+          return 0
+        fi
+
+        if [[ "$error_text" == *"Operation timed out"* || "$error_text" == *"Connection timed out"* || "$error_text" == *"not responding."* ]]; then
+          log "reverse tunnel startup failed: ssh connection timed out"
+          return 0
+        fi
+
+        if [[ "$error_text" == *"Connection refused"* ]]; then
+          log "reverse tunnel startup failed: ssh connection refused"
+          return 0
+        fi
+
+        if [[ "$error_text" == *"Permission denied"* ]]; then
+          log "reverse tunnel startup failed: ssh authentication failed"
+          return 0
+        fi
+
+        return 1
+      }
+
+      start_tunnel() {
+        local ssh_error_file
+        ssh_error_file="$(mktemp "/tmp/remotesudotouch-\(host.fileSlug).XXXXXX")"
+
+        log "starting reverse tunnel for $REMOTE_TARGET on remote port $REMOTE_PORT"
+        /usr/bin/ssh -NT \
+          -o BatchMode=yes \
+          -o ConnectTimeout=10 \
+          -o ConnectionAttempts=1 \
+          -o ExitOnForwardFailure=yes \
+          -o ServerAliveInterval=10 \
+          -o ServerAliveCountMax=1 \
+          -o TCPKeepAlive=yes \
+          -o StrictHostKeyChecking=accept-new \
+          -o ControlMaster=no \
+          -o ControlPath=none \
+          -i "$SSH_KEY" \
+          -R "127.0.0.1:$REMOTE_PORT:127.0.0.1:$LOCAL_PORT" \
+          "$REMOTE_TARGET" 2>"$ssh_error_file" &
+        SSH_PID=$!
+
+        sleep 3
+        if kill -0 "$SSH_PID" 2>/dev/null; then
+          rm -f "$ssh_error_file"
+          return 0
+        fi
+
+        wait_for_ssh "$SSH_PID"
+        SSH_EXIT_CODE=$?
+        log_ssh_error_output "$ssh_error_file"
+        if ! classify_startup_failure "$ssh_error_file"; then
+          log "reverse tunnel startup failed: ssh exited with code $SSH_EXIT_CODE"
+        fi
+        rm -f "$ssh_error_file"
+        SSH_PID=""
+        return 1
       }
 
       cleanup() {
@@ -814,53 +910,45 @@ final class InstallerService {
 
       trap cleanup EXIT INT TERM
 
-      log "starting reverse tunnel for $REMOTE_TARGET on remote port $REMOTE_PORT"
-      /usr/bin/ssh -NT \
-        -o BatchMode=yes \
-        -o ConnectTimeout=10 \
-        -o ConnectionAttempts=1 \
-        -o ExitOnForwardFailure=yes \
-        -o ServerAliveInterval=10 \
-        -o ServerAliveCountMax=1 \
-        -o TCPKeepAlive=yes \
-        -o StrictHostKeyChecking=accept-new \
-        -o ControlMaster=no \
-        -o ControlPath=none \
-        -i "$SSH_KEY" \
-        -R "127.0.0.1:$REMOTE_PORT:127.0.0.1:$LOCAL_PORT" \
-        "$REMOTE_TARGET" &
-      SSH_PID=$!
+      while true; do
+        if ! start_tunnel; then
+          log "retrying reverse tunnel in $RETRY_DELAY seconds"
+          sleep "$RETRY_DELAY"
+          continue
+        fi
 
-      sleep 3
-      if ! kill -0 "$SSH_PID" 2>/dev/null; then
-        wait_for_ssh "$SSH_PID"
-        exit $?
-      fi
-
-      failures=0
-      while kill -0 "$SSH_PID" 2>/dev/null; do
-        if health_check; then
-          if (( failures > 0 )); then
-            log "reverse tunnel health check recovered"
+        failures=0
+        while kill -0 "$SSH_PID" 2>/dev/null; do
+          if health_check; then
+            if (( failures > 0 )); then
+              log "reverse tunnel health check recovered"
+            fi
+            failures=0
+          else
+            failures=$((failures + 1))
+            log "reverse tunnel health check failed ($failures/$MAX_FAILURES)"
           fi
-          failures=0
-        else
-          failures=$((failures + 1))
-          log "reverse tunnel health check failed ($failures/$MAX_FAILURES)"
-        fi
 
-        if (( failures >= MAX_FAILURES )); then
-          log "reverse tunnel appears stale; exiting so launchd can restart it"
-          kill "$SSH_PID" 2>/dev/null || true
+          if (( failures >= MAX_FAILURES )); then
+            log "reverse tunnel appears stale; restarting after cooldown"
+            kill "$SSH_PID" 2>/dev/null || true
+            wait_for_ssh "$SSH_PID" || true
+            SSH_PID=""
+            break
+          fi
+
+          sleep "$HEALTH_INTERVAL"
+        done
+
+        if [[ -n "${SSH_PID:-}" ]]; then
+          log "ssh process exited; retrying reverse tunnel after cooldown"
           wait_for_ssh "$SSH_PID" || true
-          exit 1
+          SSH_PID=""
         fi
 
-        sleep "$HEALTH_INTERVAL"
+        log "retrying reverse tunnel in $RETRY_DELAY seconds"
+        sleep "$RETRY_DELAY"
       done
-
-      log "ssh process exited; handing restart back to launchd"
-      wait_for_ssh "$SSH_PID"
       """
 
       let url = tunnelRunnerScriptURL(for: host)
@@ -1042,17 +1130,26 @@ final class InstallerService {
       .map(String.init)
 
     for line in lines.reversed() {
-      if line.contains("reverse tunnel health check recovered")
-        || line.contains("starting reverse tunnel")
-        || line.contains("ssh process exited; handing restart back to launchd")
-      {
+      if line.contains("reverse tunnel health check recovered") {
         return false
       }
 
-      if line.contains("reverse tunnel appears stale")
+      if line.contains("starting reverse tunnel") {
+        return false
+      }
+
+      if line.contains("reverse tunnel startup failed")
+        || line.contains("reverse tunnel appears stale")
         || line.contains("reverse tunnel health check failed")
+        || line.contains("retrying reverse tunnel in")
       {
         return true
+      }
+
+      if line.contains("ssh process exited; retrying reverse tunnel after cooldown")
+        || line.contains("ssh process exited; handing restart back to launchd")
+      {
+        continue
       }
     }
 
@@ -1121,6 +1218,26 @@ final class InstallerService {
         Thread.sleep(forTimeInterval: 0.35 * Double(attempt))
       }
     }
+  }
+
+  private func waitForServiceStabilization(
+    configuration: InstallerConfiguration,
+    timeout: TimeInterval = 12,
+    interval: TimeInterval = 1
+  ) -> ServiceStatusSnapshot {
+    let deadline = Date().addingTimeInterval(timeout)
+    var latest = currentServiceStatus(configuration: configuration)
+
+    while Date() < deadline {
+      if latest.agentRunning && latest.healthyTunnels == latest.totalTunnels {
+        return latest
+      }
+
+      Thread.sleep(forTimeInterval: interval)
+      latest = currentServiceStatus(configuration: configuration)
+    }
+
+    return latest
   }
 
   private func bootout(label: String) throws {
